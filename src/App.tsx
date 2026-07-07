@@ -262,6 +262,60 @@ function App() {
     ? Math.min((totalSaved / savingsGoal.targetAmount) * 100, 100)
     : 0
 
+  // Savings streak: consecutive days (from most recent) with savedAmount > 0
+  let currentStreak = 0
+  for (let i = savingsWithBalance.length - 1; i >= 0; i--) {
+    if (savingsWithBalance[i].savedAmount > 0) {
+      currentStreak++
+    } else {
+      break
+    }
+  }
+
+  const averageDailySavings =
+    savingsEntries.length > 0 ? totalSaved / savingsEntries.length : 0
+
+  const bestDay =
+    savingsEntries.length > 0
+      ? savingsEntries.reduce((best, e) => (e.savedAmount > best.savedAmount ? e : best))
+      : null
+  const worstDay =
+    savingsEntries.length > 0
+      ? savingsEntries.reduce((worst, e) => (e.savedAmount < worst.savedAmount ? e : worst))
+      : null
+
+  let projectedCompletionText = ''
+  if (savingsGoal && averageDailySavings > 0) {
+    const remaining = savingsGoal.targetAmount - totalSaved
+    if (remaining <= 0) {
+      projectedCompletionText = 'Goal reached!'
+    } else {
+      const daysNeeded = Math.ceil(remaining / averageDailySavings)
+      const projectedDate = new Date()
+      projectedDate.setDate(projectedDate.getDate() + daysNeeded)
+      projectedCompletionText = `At your current pace, you'll reach this goal around ${projectedDate.toLocaleDateString()} (~${daysNeeded} days)`
+    }
+  } else if (savingsGoal) {
+    projectedCompletionText = 'Add savings entries to see a projected completion date.'
+  }
+
+  function handleExportCsv() {
+    const header = 'Date,Allowance,Expense,Category,Note,Saved,Balance\n'
+    const rows = savingsWithBalance
+      .map(
+        (s) =>
+          `${s.date},${s.allowance},${s.expenseAmount},${s.expenseCategory},"${(s.expenseNote || '').replace(/"/g, '""')}",${s.savedAmount},${s.runningBalance}`
+      )
+      .join('\n')
+    const blob = new Blob([header + rows], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'floatmaster-savings.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
+
   const tabs: { key: Tab; label: string }[] = [
     { key: 'float', label: 'Float Lines' },
     { key: 'transactions', label: 'Transactions' },
@@ -460,7 +514,21 @@ function App() {
                 <div className="summary-pill positive">
                   Saved<strong>{totalSaved.toLocaleString()}</strong>
                 </div>
+                <div className="summary-pill positive">
+                  Streak<strong>{currentStreak} {currentStreak === 1 ? 'day' : 'days'}</strong>
+                </div>
+                <div className="summary-pill">
+                  Avg/day<strong>{averageDailySavings.toLocaleString(undefined, { maximumFractionDigits: 0 })}</strong>
+                </div>
               </div>
+
+              {(bestDay || worstDay) && (
+                <p className="ledger-intro" style={{ fontFamily: 'var(--font-mono)' }}>
+                  {bestDay && `Best day: ${bestDay.date} (saved ${bestDay.savedAmount.toLocaleString()})`}
+                  {bestDay && worstDay && '   ·   '}
+                  {worstDay && `Toughest day: ${worstDay.date} (saved ${worstDay.savedAmount.toLocaleString()})`}
+                </p>
+              )}
 
               <form onSubmit={handleAddSavingsEntry} className="field-row">
                 <input
@@ -559,6 +627,11 @@ function App() {
                   <p style={{ fontFamily: 'var(--font-mono)', margin: 0 }}>
                     {totalSaved.toLocaleString()} saved ({goalProgress.toFixed(1)}% of goal)
                   </p>
+                  {projectedCompletionText && (
+                    <p style={{ fontFamily: 'var(--font-mono)', color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+                      {projectedCompletionText}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -579,6 +652,12 @@ function App() {
             <>
               <h2>Summaries</h2>
               <p className="ledger-intro">Savings grouped by week and month, plus spending by category.</p>
+
+              <div className="field-row" style={{ marginBottom: '1.5rem' }}>
+                <button onClick={handleExportCsv} disabled={savingsEntries.length === 0}>
+                  Export Savings as CSV
+                </button>
+              </div>
 
               <div className="summary-grid">
                 <div>
