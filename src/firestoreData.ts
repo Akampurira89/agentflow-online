@@ -68,8 +68,10 @@ export interface Transaction {
 const transactionsCollection = collection(db, 'transactions')
 
 export async function addTransaction(transaction: Omit<Transaction, 'id'>) {
+  const cleaned: Record<string, any> = { ...transaction }
+  if (!cleaned.customerName) delete cleaned.customerName
   return addDoc(transactionsCollection, {
-    ...transaction,
+    ...cleaned,
     createdAt: serverTimestamp(),
   })
 }
@@ -101,8 +103,10 @@ const savingsCollection = collection(db, 'savingsEntries')
 
 export async function addSavingsEntry(entry: Omit<SavingsEntry, 'id' | 'savedAmount'>) {
   const savedAmount = entry.allowance - entry.expenseAmount
+  const cleaned: Record<string, any> = { ...entry }
+  if (!cleaned.expenseNote) delete cleaned.expenseNote
   return addDoc(savingsCollection, {
-    ...entry,
+    ...cleaned,
     savedAmount,
     createdAt: serverTimestamp(),
   })
