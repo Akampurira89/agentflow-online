@@ -2,19 +2,41 @@ import { useEffect, useState } from 'react'
 import {
   FloatLine,
   Transaction,
+  SavingsEntry,
+  SavingsGoal,
   addFloatLine,
   getFloatLines,
   deleteFloatLine,
   updateFloatLineBalances,
   addTransaction,
   getTransactions,
+  addSavingsEntry,
+  getSavingsEntries,
+  deleteSavingsEntry,
+  getSavingsGoal,
+  setSavingsGoal,
 } from './firestoreData'
 
 function App() {
   const [floatLines, setFloatLines] = useState<FloatLine[]>([])
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [savingsEntries, setSavingsEntries] = useState<SavingsEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  // Savings form
+  const [savingsDate, setSavingsDate] = useState('')
+  const [allowance, setAllowance] = useState('10000')
+  const [expenseAmount, setExpenseAmount] = useState('')
+  const [expenseNote, setExpenseNote] = useState('')
+  const [expenseCategory, setExpenseCategory] = useState<
+    'transport' | 'food' | 'airtime' | 'other'
+  >('transport')
+
+  // Savings goal
+  const [savingsGoal, setSavingsGoalState] = useState<SavingsGoal | null>(null)
+  const [goalAmount, setGoalAmount] = useState('')
+  const [goalDate, setGoalDate] = useState('')
 
   // Float line form
   const [provider, setProvider] = useState<'mtn_momo' | 'airtel_money'>('mtn_momo')
@@ -35,9 +57,16 @@ function App() {
   async function loadData() {
     setLoading(true)
     try {
-      const [lines, txns] = await Promise.all([getFloatLines(), getTransactions()])
+      const [lines, txns, savings, goal] = await Promise.all([
+        getFloatLines(),
+        getTransactions(),
+        getSavingsEntries(),
+        getSavingsGoal(),
+      ])
       setFloatLines(lines)
       setTransactions(txns)
+      setSavingsEntries(savings)
+      setSavingsGoalState(goal)
       if (lines.length > 0 && !selectedLineId) {
         setSelectedLineId(lines[0].id!)
       }
@@ -141,9 +170,101 @@ function App() {
     }
   }
 
+  async function handleAddSavingsEntry(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+
+    if (!savingsDate || !allowance || !expenseAmount) {
+      setError('Please fill in date, allowance, and expense amount.')
+      return
+    }
+
+    try {
+      await addSavingsEntry({
+        date: savingsDate,
+        allowance: parseFloat(allowance),
+        expenseAmount: parseFloat(expenseAmount),
+        expenseNote: expenseNote || undefined,
+        expenseCategory,
+      })
+      setSavingsDate('')
+      setExpenseAmount('')
+      setExpenseNote('')
+      loadData()
+    } catch (err) {
+      setError('Failed to add savings entry.')
+    }
+  }
+
+  async function handleSaveGoal(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (!goalAmount || !goalDate) {
+      setError('Please enter both a target amount and target date for your goal.')
+      return
+    }
+    try {
+      await setSavingsGoal({
+        targetAmount: parseFloat(goalAmount),
+        targetDate: goalDate,
+      })
+      loadData()
+    } catch (err) {
+      setError('Failed to save goal.')
+    }
+  }
+
+  async function handleDeleteSavingsEntry(id: string | undefined) {
+    if (!id) return
+    try {
+      await deleteSavingsEntry(id)
+      loadData()
+    } catch (err) {
+      setError('Failed to delete savings entry.')
+    }
+  }
+
+  const totalSaved = savingsEntries.reduce((sum, e) => sum + e.savedAmount, 0)
+  const totalAllowance = savingsEntries.reduce((sum, e) => sum + e.allowance, 0)
+  const totalSpent = savingsEntries.reduce((sum, e) => sum + e.expenseAmount, 0)
+
+  let runningBalance = 0
+  const savingsWithBalance = savingsEntries.map((e) => {
+    runningBalance += e.savedAmount
+    return { ...e, runningBalance }
+  })
+
+  // Weekly summary (ISO week key: YYYY-Www)
+  function getWeekKey(dateStr: string) {
+    const d = new Date(dateStr)
+    const janFirst = new Date(d.getFullYear(), 0, 1)
+    const days = Math.floor((d.getTime() - janFirst.getTime()) / 86400000)
+    const week = Math.ceil((days + janFirst.getDay() + 1) / 7)
+    return `${d.getFullYear()}-W${String(week).padStart(2, '0')}`
+  }
+
+  const weeklySummary: Record<string, number> = {}
+  const monthlySummary: Record<string, number> = {}
+  savingsEntries.forEach((e) => {
+    const weekKey = getWeekKey(e.date)
+    const monthKey = e.date.slice(0, 7) // YYYY-MM
+    weeklySummary[weekKey] = (weeklySummary[weekKey] || 0) + e.savedAmount
+    monthlySummary[monthKey] = (monthlySummary[monthKey] || 0) + e.savedAmount
+  })
+
+  // Category breakdown
+  const categoryBreakdown: Record<string, number> = {}
+  savingsEntries.forEach((e) => {
+    categoryBreakdown[e.expenseCategory] =
+      (categoryBreakdown[e.expenseCategory] || 0) + e.expenseAmount
+  })
+
+  const goalProgress = savingsGoal ? Math.min((totalSaved / savingsGoal.targetAmount) * 100, 100) : 0
+
   return (
     <div className="app-container">
       <h1>FloatMaster Uganda</h1>
+
       <p>Mobile Money Agent Management</p>
 
       {error && <p className="error-text">{error}</p>}
@@ -281,6 +402,192 @@ function App() {
             </tbody>
           </table>
         )}
+      </section>
+      <section>
+        <h2>Daily Savings Tracker</h2>
+        <p style={{ textAlign: 'center' }}>
+          Total allowance: {totalAllowance.toLocaleString()} | Total spent:{' '}
+          {totalSpent.toLocaleString()} | <strong>Total saved: {totalSaved.toLocaleString()}</strong>
+        </p>
+        <form onSubmit={handleAddSavingsEntry} className="product-form">
+          <input
+            type="date"
+            value={savingsDate}
+            onChange={(e) => setSavingsDate(e.target.value)}
+          />
+          <input
+            type="number"
+            placeholder="Daily allowance"
+            value={allowance}
+            onChange={(e) => setAllowance(e.target.value)}
+          />
+          <input
+            type="number"
+            placeholder="Expense amount"
+            value={expenseAmount}
+            onChange={(e) => setExpenseAmount(e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Expense note (e.g. transport)"
+            value={expenseNote}
+            onChange={(e) => setExpenseNote(e.target.value)}
+          />
+          <select
+            value={expenseCategory}
+            onChange={(e) => setExpenseCategory(e.target.value as any)}
+          >
+            <option value="transport">Transport</option>
+            <option value="food">Food</option>
+            <option value="airtime">Airtime</option>
+            <option value="other">Other</option>
+          </select>
+          <button type="submit">Add Entry</button>
+        </form>
+
+        {savingsWithBalance.length === 0 ? (
+          <p>No savings entries yet. Add yesterday's entry above to get started.</p>
+        ) : (
+          <table className="product-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Allowance</th>
+                <th>Expense</th>
+                <th>Category</th>
+                <th>Note</th>
+                <th>Saved</th>
+                <th>Balance</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {savingsWithBalance.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.date}</td>
+                  <td>{s.allowance.toLocaleString()}</td>
+                  <td>{s.expenseAmount.toLocaleString()}</td>
+                  <td>{s.expenseCategory}</td>
+                  <td>{s.expenseNote || '-'}</td>
+                  <td>{s.savedAmount.toLocaleString()}</td>
+                  <td>{s.runningBalance.toLocaleString()}</td>
+                  <td>
+                    <button onClick={() => handleDeleteSavingsEntry(s.id)}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section>
+        <h2>Savings Goal</h2>
+        {savingsGoal && (
+          <div style={{ marginBottom: '1rem' }}>
+            <p>
+              Target: {savingsGoal.targetAmount.toLocaleString()} by {savingsGoal.targetDate}
+            </p>
+            <div
+              style={{
+                background: '#e5e7eb',
+                borderRadius: '6px',
+                height: '20px',
+                width: '100%',
+                overflow: 'hidden',
+              }}
+            >
+              <div
+                style={{
+                  background: goalProgress >= 100 ? '#16a34a' : '#2563eb',
+                  height: '100%',
+                  width: `${goalProgress}%`,
+                  transition: 'width 0.3s',
+                }}
+              />
+            </div>
+            <p>
+              {totalSaved.toLocaleString()} saved ({goalProgress.toFixed(1)}% of goal)
+            </p>
+          </div>
+        )}
+        <form onSubmit={handleSaveGoal} className="product-form">
+          <input
+            type="number"
+            placeholder="Target amount"
+            value={goalAmount}
+            onChange={(e) => setGoalAmount(e.target.value)}
+          />
+          <input
+            type="date"
+            value={goalDate}
+            onChange={(e) => setGoalDate(e.target.value)}
+          />
+          <button type="submit">{savingsGoal ? 'Update Goal' : 'Set Goal'}</button>
+        </form>
+      </section>
+
+      <section>
+        <h2>Summaries</h2>
+        <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', justifyContent: 'center' }}>
+          <div>
+            <h3 style={{ textAlign: 'center' }}>Weekly Savings</h3>
+            <table className="product-table">
+              <thead>
+                <tr>
+                  <th>Week</th>
+                  <th>Saved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(weeklySummary).map(([week, total]) => (
+                  <tr key={week}>
+                    <td>{week}</td>
+                    <td>{total.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3 style={{ textAlign: 'center' }}>Monthly Savings</h3>
+            <table className="product-table">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th>Saved</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(monthlySummary).map(([month, total]) => (
+                  <tr key={month}>
+                    <td>{month}</td>
+                    <td>{total.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div>
+            <h3 style={{ textAlign: 'center' }}>Spending by Category</h3>
+            <table className="product-table">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Total Spent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(categoryBreakdown).map(([cat, total]) => (
+                  <tr key={cat}>
+                    <td>{cat}</td>
+                    <td>{total.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </div>
   )
