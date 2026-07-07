@@ -1,8 +1,0 @@
-export default function App() {
-  return (
-    <main style={{ padding: '2rem', fontFamily: 'Arial, sans-serif' }}>
-      <h1>AgentFlow Online</h1>
-      <p>Your Vite app is working.</p>
-    </main>
-  )
-}
